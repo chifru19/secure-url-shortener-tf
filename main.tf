@@ -52,7 +52,7 @@ resource "aws_kinesis_firehose_delivery_stream" "splunk_stream" {
 
   s3_configuration {
     role_arn           = aws_iam_role.firehose_role.arn
-    bucket_arn         = aws_s3_bucket.app_bucket.arn # Fixed name from .bucket to .app_bucket
+    bucket_arn         = aws_s3_bucket.app_bucket.arn
     buffer_size        = 5
     buffer_interval    = 300
     compression_format = "GZIP"
@@ -73,17 +73,21 @@ resource "aws_kinesis_firehose_delivery_stream" "splunk_stream" {
   }
 }
 
-# --- 5. IAM PERMISSIONS (NEW) ---
+# --- 5. IAM ROLE FOR FIREHOSE ---
 resource "aws_iam_role" "firehose_role" {
   name = "firehose_splunk_role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "firehose.amazonaws.com" }
-    }]
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "firehose.amazonaws.com"
+        }
+      }
+    ]
   })
 }
 
@@ -95,14 +99,28 @@ resource "aws_iam_role_policy" "firehose_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Action = ["s3:AbortMultipartUpload", "s3:GetBucketLocation", "s3:GetObject", "s3:ListBucket", "s3:PutObject"]
-        Effect = "Allow"
-        Resource = [aws_s3_bucket.app_bucket.arn, "${aws_s3_bucket.app_bucket.arn}/*"]
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:GetBucketLocation",
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:ListBucketMultipartUploads",
+          "s3:PutObject"
+        ]
+        Effect   = "Allow"
+        Resource = [
+          aws_s3_bucket.app_bucket.arn,
+          "${aws_s3_bucket.app_bucket.arn}/*"
+        ]
       },
       {
-        Action   = ["logs:PutLogEvents"]
+        Action = [
+          "logs:PutLogEvents"
+        ]
         Effect   = "Allow"
-        Resource = ["${aws_cloudwatch_log_group.lambda_logs.arn}:*"]
+        Resource = [
+          "${aws_cloudwatch_log_group.lambda_logs.arn}:*"
+        ]
       }
     ]
   })
