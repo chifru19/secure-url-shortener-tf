@@ -1,4 +1,26 @@
-# --- 1. SECURE DATABASE (DYNAMODB) ---
+# --- 0. LOCALSTACK PROVIDER ---
+provider "aws" {
+  region                      = "us-east-1"
+  access_key                  = "test"
+  secret_key                  = "test"
+  
+  # These 4 lines are CRITICAL for LocalStack success
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+  s3_use_path_style           = true
+
+  endpoints {
+    dynamodb = "http://localhost:4566"
+    s3       = "http://localhost:4566"
+    lambda   = "http://localhost:4566"
+    iam      = "http://localhost:4566"
+    firehose = "http://localhost:4566"
+    logs     = "http://localhost:4566"
+  }
+}
+
+# --- 1. SECURE DATABASE ---
 resource "aws_dynamodb_table" "url_db" {
   name         = "urls"
   billing_mode = "PAY_PER_REQUEST"
@@ -9,53 +31,67 @@ resource "aws_dynamodb_table" "url_db" {
     type = "S"
   }
 
-  server_side_encryption {
-    enabled = true
-  }
-
-  point_in_time_recovery {
-    enabled = true
-  }
+  server_side_encryption { enabled = true }
+  point_in_time_recovery { enabled = true }
 }
 
-# --- 2. SECURE STORAGE (S3) ---
+# --- 2. SECURE STORAGE ---
 resource "aws_s3_bucket" "app_bucket" {
   bucket = "frank-shortener-secure-storage"
 }
 
-resource "aws_s3_bucket_versioning" "app_bucket_versioning" {
+resource "aws_s3_bucket_versioning" "v" {
   bucket = aws_s3_bucket.app_bucket.id
-  versioning_configuration {
-    status = "Enabled"
+  versioning_configuration { status = "Enabled" }
+}
+
+resource "aws_s3_bucket_public_access_block" "p" {
+  bucket = aws_s3_bucket.app_bucket.id
+  block_public_acls, block_public_policy, ignore_public_acls, restrict_public_buckets = true, true, true, true
+}
+
+# --- 3. THE LAMBDA FUNCTION ---
+resource "aws_iam_role" "lambda_role" {
+  name = "url_shortener_lambda_role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_lambda_function" "url_shortener" {
+  filename      = "lambda.zip"
+  function_name = "url_shortener_func"
+  role          = aws_iam_role.lambda_role.arn
+  handler       = "index.handler"
+  runtime       = "python3.9"
+
+  environment {
+    variables = {
+      DYNAMODB_TABLE = aws_dynamodb_table.url_db.name
+    }
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "privacy" {
-  bucket = aws_s3_bucket.app_bucket.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# --- 3. OBSERVABILITY (CLOUDWATCH) ---
+# --- 4. OBSERVABILITY ---
 resource "aws_cloudwatch_log_group" "lambda_logs" {
   name              = "/aws/lambda/url_shortener"
   retention_in_days = 14
 }
 
-# --- 4. TELEMETRY PIPELINE (SPLUNK) ---
 resource "aws_kinesis_firehose_delivery_stream" "splunk_stream" {
   name        = "shortener-to-splunk"
   destination = "splunk"
 
   s3_configuration {
-    role_arn           = aws_iam_role.firehose_role.arn
-    bucket_arn         = aws_s3_bucket.app_bucket.arn
-    buffer_size        = 5
-    buffer_interval    = 300
-    compression_format = "GZIP"
+    role_arn        = aws_iam_role.firehose_role.arn
+    bucket_arn      = aws_s3_bucket.app_bucket.arn
+    buffer_size     = 5
+    buffer_interval = 300
   }
 
   splunk_configuration {
@@ -73,55 +109,23 @@ resource "aws_kinesis_firehose_delivery_stream" "splunk_stream" {
   }
 }
 
-# --- 5. IAM ROLE FOR FIREHOSE ---
+# --- 5. FIREHOSE IAM ---
 resource "aws_iam_role" "firehose_role" {
   name = "firehose_splunk_role"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "firehose.amazonaws.com"
-        }
-      }
-    ]
+    Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "firehose.amazonaws.com" } }]
   })
 }
 
 resource "aws_iam_role_policy" "firehose_policy" {
   name = "firehose_splunk_policy"
   role = aws_iam_role.firehose_role.id
-
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Action = [
-          "s3:AbortMultipartUpload",
-          "s3:GetBucketLocation",
-          "s3:GetObject",
-          "s3:ListBucket",
-          "s3:ListBucketMultipartUploads",
-          "s3:PutObject"
-        ]
-        Effect   = "Allow"
-        Resource = [
-          aws_s3_bucket.app_bucket.arn,
-          "${aws_s3_bucket.app_bucket.arn}/*"
-        ]
-      },
-      {
-        Action = [
-          "logs:PutLogEvents"
-        ]
-        Effect   = "Allow"
-        Resource = [
-          "${aws_cloudwatch_log_group.lambda_logs.arn}:*"
-        ]
-      }
+      { Action = ["s3:*"], Effect = "Allow", Resource = [aws_s3_bucket.app_bucket.arn, "${aws_s3_bucket.app_bucket.arn}/*"] },
+      { Action = ["logs:PutLogEvents"], Effect = "Allow", Resource = ["*"] }
     ]
   })
 }
