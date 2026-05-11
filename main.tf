@@ -4,7 +4,7 @@ provider "aws" {
   access_key                  = "test"
   secret_key                  = "test"
   
-  # These 4 lines are CRITICAL for LocalStack success
+  # CRITICAL: These tell Terraform "Don't look at the internet/AWS"
   skip_credentials_validation = true
   skip_metadata_api_check     = true
   skip_requesting_account_id  = true
@@ -25,12 +25,7 @@ resource "aws_dynamodb_table" "url_db" {
   name         = "urls"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "id"
-
-  attribute {
-    name = "id"
-    type = "S"
-  }
-
+  attribute { name = "id"; type = "S" }
   server_side_encryption { enabled = true }
   point_in_time_recovery { enabled = true }
 }
@@ -86,21 +81,18 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
 resource "aws_kinesis_firehose_delivery_stream" "splunk_stream" {
   name        = "shortener-to-splunk"
   destination = "splunk"
-
   s3_configuration {
     role_arn        = aws_iam_role.firehose_role.arn
     bucket_arn      = aws_s3_bucket.app_bucket.arn
     buffer_size     = 5
     buffer_interval = 300
   }
-
   splunk_configuration {
     hec_endpoint               = "https://your-splunk-instance:8088"
     hec_token                  = "YOUR-HEC-TOKEN"
     hec_acknowledgment_timeout = 300
     hec_endpoint_type          = "Raw"
     s3_backup_mode             = "FailedEventsOnly"
-
     cloudwatch_logging_options {
       enabled         = true
       log_group_name  = aws_cloudwatch_log_group.lambda_logs.name

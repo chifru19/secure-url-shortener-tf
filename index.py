@@ -1,1 +1,1 @@
-def handler(event, context): return 'Free tier test success'
+def handler(event, context): return 'ok'
