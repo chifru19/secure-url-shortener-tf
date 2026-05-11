@@ -1,0 +1,15 @@
+name: tfsec-security-scan
+on: [push, pull_request]
+
+jobs:
+  tfsec:
+    name: tfsec-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v4
+
+      - name: Run tfsec scan
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          soft_fail: false # This ensures the badge turns red if security fails
